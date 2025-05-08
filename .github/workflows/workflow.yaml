@@ -1,0 +1,36 @@
+on:
+  push:
+    branches:
+      -main  # ou a branch que você quiser monitorar
+
+jobs:
+  sync-submodules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout com submódulos
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.PUSH_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configurar Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Atualizar submódulos
+        run: |
+          git submodule update --remote --merge
+          git add .
+          git commit -m "chore: atualiza submódulos após push" || echo "Nada para commitar"
+
+      - name: Push para repositório pai
+        run: git push origin HEAD:main
+
+      - name: Push para submódulos
+        run: |
+          git submodule foreach '
+            echo "Fazendo push em $name"
+            git push origin HEAD || echo "Nada para pushar"
+          '
