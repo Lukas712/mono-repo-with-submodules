@@ -1,42 +1,56 @@
-name: 🔄 Sync Bidirectional Submodules
-
-on:
-  push:
-    branches: [ main ]
-
 jobs:
-  sync:
+  sync-submodules-and-update-parent:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout parent + submodules
+      - name: Checkout do repositório pai com submódulos
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_TOKEN }}
           submodules: recursive
           fetch-depth: 0
 
-      - name: Setup Git
+      - name: Configurar Git
         run: |
-          git config user.name  "GitHub Actions Bot"
-          git config user.email "actions@github.com"
-          # Faz com que todo git push no parent também envie commits pendentes nos submodules
-          git config push.recurseSubmodules on-demand
+          git config --global user.name "GitHub Bot"
+          git config --global user.email "bot@example.com"
 
-      - name: Commit & push changes
+      - name: Capturar mensagem do último commit no pai
         run: |
-          # (opcional) se quiser commitar alterações nos submodules: 
-          git submodule foreach --quiet '
-            if [[ -n "$(git status --porcelain)" ]]; then
-              git checkout main
-              git add .
-              git diff --cached --quiet || git commit -m "🔄 Sync from parent @${GITHUB_SHA:0:7}"
+          commit_message=$(git log -1 --pretty=%B)
+          repo_name="${GITHUB_REPOSITORY}"
+          commit_message_with_repo="${commit_message} [Atualização via ${repo_name}]"
+          echo "commit_message_with_repo=$commit_message_with_repo" >> $GITHUB_ENV
+
+      - name: Fazer push de commits locais nos submódulos
+        run: |
+          git submodule foreach '
+            echo "-----------------------------"
+            echo "Verificando submódulo: $name"
+            branch=$(git symbolic-ref --short HEAD || echo "main")
+
+            upstream=$(git config branch.$branch.remote || echo "origin")
+            url=$(git config remote.$upstream.url)
+
+            if [ "$(git cherry -v | wc -l)" -gt 0 ]; then
+              echo "⚠️ Submódulo $name possui commits locais. Realizando push..."
+              git push $upstream $branch
+            else
+              echo "✅ Sem alterações locais no submódulo $name"
             fi
+            echo "-----------------------------"
           '
-          # Agora commit no parent (poderá incluir nova referência de submodule)
+
+      - name: Atualizar ponteiros dos submódulos para as versões mais recentes
+        run: |
+          git submodule update --remote --merge
+
+      - name: Commit e push no repositório pai, se necessário
+        run: |
           git add .
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
+          if ! git diff --cached --quiet; then
+            git commit -m "${{ env.commit_message_with_repo }}"
+            git push
           else
-            git commit -m "🔄 Parent changes (incluindo submodules)"
-            git push origin main
+            echo "✅ Nenhuma alteração detectada no repositório pai. Nada a commitar."
           fi
