@@ -1,40 +1,69 @@
+name: 🔄 Sync Submodules Bidirectional
+
 on:
   push:
-    branches: [main]
+    branches: [ main ]
+
+env:
+  GIT_AUTHOR_NAME:    "GitHub Actions Bot"
+  GIT_AUTHOR_EMAIL:   "actions@github.com"
+  GIT_COMMITTER_NAME: "GitHub Actions Bot"
+  GIT_COMMITTER_EMAIL: "actions@github.com"
+  CHILD_BRANCH:       main
 
 jobs:
-  sync-submodules:
+  sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout com submódulos
+
+      # 1) Checkout parent REPO c/ todos os submódulos já clonados
+      - name: Checkout parent + submodules
         uses: actions/checkout@v4
         with:
+          token: ${{ secrets.GH_TOKEN }}
           submodules: recursive
           fetch-depth: 0
-          token: ${{ secrets.GH_TOKEN }}
 
-      - name: Configura Git
+      - name: Setup Git user
         run: |
-          git config --global user.name "GitHub Bot"
-          git config --global user.email "bot@example.com"
+          git config user.name  "$GIT_AUTHOR_NAME"
+          git config user.email "$GIT_AUTHOR_EMAIL"
 
-      - name: Verifica quais submódulos foram modificados
-        id: changed
+      # 2) (Opcional) captura mensagem para reaproveitar do filho → parent
+      - name: Get last commit message from this push
+        if: ${{ github.event_name == 'push' }}
         run: |
-          git submodule foreach 'git fetch origin && git status'
-          git diff --cached --submodule=log > submodule_changes.txt
-          cat submodule_changes.txt
+          echo "BASE_MSG<<EOF" >> $GITHUB_ENV
+          git log -1 --pretty=%B
+          echo "EOF"       >> $GITHUB_ENV
 
-          changed_submodules=$(git diff --cached --submodule=log | grep "Submodule" | awk '{print $2}')
-          echo "changed_submodules=$changed_submodules" >> $GITHUB_ENV
-
-      - name: Propaga alterações de volta aos submódulos
-        if: env.changed_submodules != ''
+      # 3) Push de volta para cada submodule que tenha sido modificado NO PAI
+      - name: Push parents’ changes back into each child repo
         run: |
-          for module in ${{ env.changed_submodules }}; do
-            echo "Propagando alterações para $module"
-            cd "$module"
+          # Para cada submódulo que sofreu alteração de conteúdo…
+          git submodule foreach --quiet '
+            # $path = caminho relativo; $toplevel é o root do pai
+            if [[ -n "$(git status --porcelain)" ]]; then
+              echo "→ Submodule $name has local changes, pushing back to child repo"
+              # garante estar na branch main
+              git checkout $CHILD_BRANCH
+              # commit local
+              git add .
+              git diff --cached --quiet || \
+                git commit -m "🔄 Sync from parent repo (${GITHUB_REPOSITORY}@${GITHUB_SHA:0:7})"
+              # empurra para o remoto original do submódulo
+              git push origin HEAD:$CHILD_BRANCH
+            else
+              echo "→ Submodule $name no changes, skipping"
+            fi
+          '
 
-            git push origin HEAD:main || echo "Falha ao fazer push em $module (pode estar em detached HEAD)"
-            cd -
-          done
+      # 4) Atualiza os ponteiros de submódulo no parent e commita caso haja mudança
+      - name: Update submodule pointers & push parent
+        run: |
+          git submodule update --remote --merge
+          git add .
+          git diff --cached --quiet || (
+            git commit -m "🔄 Update submodule refs after child-sync"
+            git push origin main
+          )
