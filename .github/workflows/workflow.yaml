@@ -1,7 +1,6 @@
 on:
   push:
-    branches:
-      -main  # ou a branch que você quiser monitorar
+    branches: [main]
 
 jobs:
   sync-submodules:
@@ -11,26 +10,31 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.PUSH_TOKEN }}
           fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
 
-      - name: Configurar Git
+      - name: Configura Git
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "GitHub Bot"
+          git config --global user.email "bot@example.com"
 
-      - name: Atualizar submódulos
+      - name: Verifica quais submódulos foram modificados
+        id: changed
         run: |
-          git submodule update --remote --merge
-          git add .
-          git commit -m "chore: atualiza submódulos após push" || echo "Nada para commitar"
+          git submodule foreach 'git fetch origin && git status'
+          git diff --cached --submodule=log > submodule_changes.txt
+          cat submodule_changes.txt
 
-      - name: Push para repositório pai
-        run: git push origin HEAD:main
+          changed_submodules=$(git diff --cached --submodule=log | grep "Submodule" | awk '{print $2}')
+          echo "changed_submodules=$changed_submodules" >> $GITHUB_ENV
 
-      - name: Push para submódulos
+      - name: Propaga alterações de volta aos submódulos
+        if: env.changed_submodules != ''
         run: |
-          git submodule foreach '
-            echo "Fazendo push em $name"
-            git push origin HEAD || echo "Nada para pushar"
-          '
+          for module in ${{ env.changed_submodules }}; do
+            echo "Propagando alterações para $module"
+            cd "$module"
+
+            git push origin HEAD:main || echo "Falha ao fazer push em $module (pode estar em detached HEAD)"
+            cd -
+          done
