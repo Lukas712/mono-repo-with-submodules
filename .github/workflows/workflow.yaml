@@ -1,12 +1,11 @@
-name: sync-submodules-and-update-parent:
-    
 on:
   push:
     branches: [main]
 
 jobs:
-  sync-submodules:
+  sync-submodules-and-update-parent:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout do repositório pai com submódulos
         uses: actions/checkout@v4
